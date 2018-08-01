@@ -1,4 +1,36 @@
-Action id/Action name                                   Action parameters                         
+已知的type：
+* screen: [int, int]，例如[3, 5]，int取值范围与screen的resolution有关。
+* minimap: 同上，取值范围与minimap resolution有关。
+* screen2: 跟screen类型完全一样，只是有的动作会需要接不止一个screen
+* queue: bool
+* control_group_act (要使用以下代码需from s2clientprotocol import ui_pb2 as sc_ui):
+    * sc_ui.ActionControlGroup.Recall,
+    * sc_ui.ActionControlGroup.Set,
+    * sc_ui.ActionControlGroup.Append,
+    * sc_ui.ActionControlGroup.SetAndSteal,
+    * sc_ui.ActionControlGroup.AppendAndSteal,
+* control_group_id: int, 范围range(10)
+* select_point_act: 
+    * sc_spatial.ActionSpatialUnitSelectionPoint.Select,
+    * sc_spatial.ActionSpatialUnitSelectionPoint.Toggle,
+    * sc_spatial.ActionSpatialUnitSelectionPoint.AllType,
+    * sc_spatial.ActionSpatialUnitSelectionPoint.AddAllType,
+* select_add: bool 表示(选中 或 添加选中)
+* select_unit_act:
+    * sc_ui.ActionMultiPanel.SingleSelect,
+    * sc_ui.ActionMultiPanel.DeselectUnit,
+    * sc_ui.ActionMultiPanel.SelectAllOfType,
+    * sc_ui.ActionMultiPanel.DeselectAllOfType,
+* select_unit_id: int, 范围range(10)，依赖当前选中的单位
+* select_worker:
+    * sc_ui.ActionSelectIdleWorker.Set,
+    * sc_ui.ActionSelectIdleWorker.Add,
+    * sc_ui.ActionSelectIdleWorker.All,
+    * sc_ui.ActionSelectIdleWorker.AddAll,
+* build_queue_id: int, 范围range(10)，依赖当前的建造队列
+* unload_id: int, 范围range(500)，依赖当前装载的单位
+
+<Action id>/<Action名称>                                (参数类别id/参数名称 [参数值的size, *]; *)
    0/no_op                                              ()
    1/move_camera                                        (1/minimap [64, 64])
    2/select_point                                       (6/select_point_act [4]; 0/screen [84, 84])
