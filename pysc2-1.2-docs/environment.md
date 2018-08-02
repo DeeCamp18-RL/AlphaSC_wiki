@@ -1,3 +1,42 @@
+## Environment Table of Contents
+
+- [Starcraft II](#starcraft-ii)
+    - [What is StarCraft II](#what-is-starcraft-ii)
+    - [Versions](#versions)
+    - [Game and Action Speed](#game-and-action-speed)
+        - [Game speed](#game-speed)
+        - [APM Calculation](#apm-calculation)
+        - [APM and fairness](#apm-and-fairness)
+    - [Determinism and Randomness](#determinism-and-randomness)
+- [Actions and Observations](#actions-and-observations)
+    - [Observation](#observation)
+        - [Spatial/Visual](#spatialvisual)
+            - [RGB Pixels](#rgb-pixels)
+            - [Feature layers](#feature-layers)
+            - [Minimap](#minimap)
+            - [Screen](#screen)
+        - [Structured](#structured)
+            - [General player information](#general-player-information)
+            - [Control groups](#control-groups)
+            - [Single Select](#single-select)
+            - [Multi Select](#multi-select)
+            - [Cargo](#cargo)
+            - [BuildQueue](#build-queue)
+            - [AvailableActions](#available-actions)
+            - [LastActions](#last-actions)
+            - [ActionsResult](#action-result)
+            - [Alerts](#alerts)
+    - [Actions](#actions)
+        - [List of actions](#list-of-actions)
+        - [Action categories](#action-categories)
+        - [General vs Specific actions](#general-vs-specific-actions)
+        - [Example usage](#example-usage)
+- [RL Environment](#rl-environment)
+    - [Environment wrappers](#environment-wrappers)
+- [Agents](#agents)
+
+<!-- /TOC -->
+
 ## StarCraft II
 
 ### What is StarCraft II
@@ -25,8 +64,9 @@ fairly weak and predictable, and the stronger ones cheat.
 
 There are many resources online for learning about Starcraft, including
 [Battle.net](http://battle.net/sc2/en/),
-[TeamLiquid](http://wiki.teamliquid.net/starcraft2/StarCraft) and
-[Wikia](http://starcraft.wikia.com/wiki/StarCraft_Wiki).
+[Liquipedia](http://liquipedia.net/starcraft2/StarCraft) and
+[Wikia](http://starcraft.wikia.com/). For map making check out
+[SC2Mapster](https://sc2mapster.gamepedia.com/SC2Mapster_Wiki).
 
 ### Versions
 
@@ -93,10 +133,10 @@ precision.
 To at least resemble playing fairly it is a good idea to artificially limit the
 APM. The easy way is to limit how often the agent gets observations and can make
 an action, and limit it to one action per observation. For example you can do
-this by only taking every Nth observation, where N is up for debate. A value of
-20 is roughly equal to 50 apm while 5 is roughly 200 apm, so that's a reasonable
-range to play with. A more sophisticated way is to give the agent every
-observation but limit the number of actions that actually have an effect,
+this by only taking every `N`th observation, where `N` is up for debate. A value
+of 20 is roughly equal to 50 apm while 5 is roughly 200 apm, so that's a
+reasonable range to play with. A more sophisticated way is to give the agent
+every observation but limit the number of actions that actually have an effect,
 forcing it to mainly make no-ops which wouldn't count as actions.
 
 It's probably better to consider all actions as equivalent, including camera
@@ -141,18 +181,43 @@ because there is a lot of text and numbers which agents aren't expected to learn
 to read, especially at low resolution. It's also because it's hard to reverse
 replays back to exactly the same visuals that the human saw.
 
+__Important Note:__
+
+Spatial observations are in y-major screen coordinate space as `(y, x)`. Actions
+that require points on the screen or the minimap, however, expect the
+coordinates as `(x, y)`. The origin `(0, 0)` is at the top-left corner in both
+cases.
+
+See the [scripted agents](../pysc2/agents/scripted_agent.py) for an example of
+passing a screen coordinate to an action:
+
+```python
+    # Spatial observations have the y-coordinate first:
+    y, x = (obs.observation["feature_screen"][_PLAYER_RELATIVE] == _PLAYER_NEUTRAL).nonzero()
+
+    # Actions expect x-coordinate first:
+    target = [int(x.mean()), int(y.mean())]
+    action = actions.FunctionCall.Move_screen("now", target)
+```
+
 ### Observation
 
 #### Spatial/Visual
 
 ##### RGB Pixels
 
-This is still work in progress but will be available in the future.
+RGB pixels are available for both the main screen area as well as for the
+minimap at a resolution of your choice. This uses the same perspective camera as
+a human would see, but doesn't include all the extra chrome around the screen
+like the command card, selection box, build queue, etc. They are exposed as
+`rgb_screen` and `rgb_minimap`.
 
 ##### Feature layers
 
-Instead of normal RGB pixels, the game exposes feature layers. There are ~20 of
-them broken down between the screen and minimap.
+The game also exposes feature layers. They represent roughly the same
+information as RGB pixels except that the information is decomposed and
+structured. There are ~25 feature layers broken down between the screen and
+minimap and exposed as `feature_screen` and `feature_minimap`.
 
 The full list is defined in `pysc2.lib.features`.
 
@@ -209,7 +274,7 @@ These are the screen feature layers:
 *   **player_relative**: Which units are friendly vs hostile. Takes values in
     [0, 4], denoting [background, self, ally, neutral, enemy] units
     respectively.
-*   **unit_type**: A unit type id
+*   **unit_type**: A unit type id, which can be looked up in pysc2/lib/units.py.
 *   **selected**: Which units are selected.
 *   **hit_points**: How many hit points the unit has.
 *   **energy**: How much energy the unit has.
@@ -292,6 +357,21 @@ referenced by the `build_queue` action.
 A `(n)` tensor listing all the action ids that are available at the time of this
 observation.
 
+##### Last Actions
+
+A `(n)` tensor listing all the action ids that were made successfully since the
+last observation. An action that was attempted but failed is not included here.
+
+##### Action Result
+
+A `(n)` tensor (usually size 1) giving the result of the action. The values are
+listed in
+[error.proto](https://github.com/Blizzard/s2client-proto/blob/master/s2clientprotocol/error.proto)
+
+##### Alerts
+
+A `(n)` tensor (usually empty, occasionally size 1, max 2) for when you're being attacked in a major way.
+
 ### Actions
 
 The SC2 action space is very big. There are hundreds of possible actions, many
@@ -305,18 +385,21 @@ Instead, we created function actions that are rich enough to give
 composability, without the complexity of an arbitrary hierarchy. This is based
 on the mental model of a C-style function call which can take some arguments of
 specific types. The full set of valid types and functions are defined in
-`ValidActions` in `pysc2.lib.actions`, and then each observation specifies which of
-the available function is valid this frame. Each action is a single
+`ValidActions` in `pysc2.lib.actions`, and then each observation specifies which
+of the available function is valid this frame. Each action is a single
 `FunctionCall` in `pysc2.lib.actions` with all its arguments filled.
 
-The full set of types and functions are defined in `pysc2.lib.actions`.
-The set of functions is hard coded and limited to just the actions that humans
-have taken, as seen by a large number of replays. It lists both general and
-specific functions such that the many forms of cancel are exposed as a single
-action.
+The full set of types and functions are defined in `pysc2.lib.actions`. The set
+of functions is hard coded and limited to just the actions that humans have
+taken, as seen by a large number of replays. Hard coding the functions means
+that actions created in custom maps won't be usable until they are added to
+`pysc2.lib.actions`.
 
-Hard coding the functions means that actions created in custom maps won't be
-usable until they are added to `pysc2.lib.actions`.
+The semantic meaning of these actions can mainly be found by searching:
+[liquipedia.net/starcraft2](http://liquipedia.net/starcraft2/) or
+[starcraft.wikia](http://starcraft.wikia.com/).
+
+#### List of actions
 
 To see which actions exist run:
 
@@ -380,38 +463,85 @@ Some examples:
     84)` which represent a pixel on the screen.
 
 The function names should be unique, stable and meaningful. The function and
-type ids are the index into the list of `function_defs` and `types`.
+type ids are the index into the list of `functions` and `types`.
 
 The `types` are a predefined list of argument types that can be used in a
 function call. The exact definitions are in `pysc2.lib.actions.TYPES`
 
-Some actions are general. This is visible in actions.py through an extra param
-at function construction. It's often exposed in the name as longer versions
-being the specific versions. Above you see `Attack_screen` (general),
-`Attack_Attack_screen` and `Scan_Move_screen` (specific). For now only
-the general actions are exposed through the environment api.
+#### Action categories
 
 A `Morph` action transform a unit to a different unit, at least according to the
 unit_type in the observation. For example `Morph_Lair_quick` morphs a hatchery
-to a lair. `Morph_SiegeMode_quick` and `Morph_Unsiege_quick` morphs a siege tank
+to a lair; `Morph_SiegeMode_quick` and `Morph_Unsiege_quick` morphs a siege tank
 between tank and siege mode. An `Effect` is a single effect, rarely cancelable.
-A `Behavior` can be turned on and off.
+A `Behavior` can be turned on and off but doesn't change the unit type.
 
-Take a look at the `random_agent` for an example of how to consume
-`ValidActions` and fill `FunctionCall`s.
+#### General vs Specific actions
+
+StarCraft II speaks in terms of abilities. Sometimes a single concept that can
+be done by many units is implemented as a single ability (eg Move, Halt,
+Patrol), and sometimes as many abilities (eg Attack, Burrow, Cancel, Lift/Land).
+`Burrow` is a simple example where each zerg unit that can burrow has its own
+ability (`BurrowDown_Drone`, `BurrowDown_Zergling`, etc). Exposing those
+individually would make the action space even more complicated, and make it hard
+to burrow a whole army at once given a [limited APM](#apm-and-fairness), so we
+added a concept of general abilities that merge all of the specific abilities
+that would happen together or using the same key in the game UI. If you give the
+specific ability (eg `BurrowDown_Zergling`) it'll only affect the specific units
+that support that ability (eg Zerglings), while if you give the corresponding
+general ability (`BurrowDown`) it'll affect all units that support it.
+
+Attack is a non-obvious case of this. There is `Attack`, which is the general
+ability that corresponds to what the UI does, but under the hood that actually
+executes `Attack_Attack` for offensive units, `Scan_Move` for support units like
+medivacs that can't attack but should come along as if they can,
+`Attack_AttackBuilding` for defensive buildings (eg missile turret) and
+`Attack_Redirect` for bunkers to tell their loaded units to attack.
+
+For now only the general actions are exposed through the environment api so only
+the general actions should be returned in the available actions observation.
+
+In `pysc2.lib.actions.FUNCTIONS` specific functions have an additional parameter
+that references the general parameter.
+
+#### Example usage
+
+Take a look at the [random agent](../pysc2/agents/random_agent.py) for an
+example of how to consume `ValidActions` and fill `FunctionCall`s.
+
+The following snippet shows how to print a human-readable list of available
+actions:
+
+```python
+    from pysc2.lib import actions
+
+    for action in obs.observation.available_actions:
+        print(actions.FUNCTIONS[action])
+```
 
 ## RL Environment
 
-The main SC2 environment is at `pysc2.env.sc2_env`, with the action and observation
-space defined in `pysc2.lib.features`.
+The main SC2 environment is at `pysc2.env.sc2_env`, with the action and
+observation space defined in `pysc2.lib.features`.
 
 The most important argument is `map_name`, which is how to find the map.
 Find the names by using `pysc2.bin.map_list` or by looking in `pysc2/maps/*.py`.
 
-`screen_size_px` and `minimap_size_px` let you specify the resolution of the
-features layers you get in the observations. Higher resolution obviously gives
-higher location precision, at the cost of larger observations as well as a
-larger action space.
+`players` lets your specify the number and type of players. At the moment only
+one or two players are supported. Give it a list of `sc2_env.Agent` or
+`sc2_env.Bot` objects, specifying the race and difficulty. Specifying two agents
+will start up two instances of SC2 which communicate between themselves, and
+consume double the memory and cpu as playing single player.
+
+`agent_interface_format` lets you specify the observation and action interface
+to be used by each agent. `feature_dimensions` and `rgb_dimensions` let you
+specify the resolution of the spatial observations. Higher resolution obviously
+gives higher location precision, at the cost of larger observations as well as a
+larger action space, and slower rendering time.
+
+If you ask for both feature and rgb observations you'll need to specify the
+action space that you want to use. This lets you act in one while learning from
+the other.
 
 `step_mul` let's you skip observations and actions. For example a `step_mul` of
 16 means that the environment gets stepped forward 16 times in between the
@@ -422,8 +552,6 @@ frames.
 
 `save_replay_episodes` and `replay_dir` specify how often to save replays and
 where to save them.
-
-Currently there is no multiplayer support.
 
 Use the `run_loop.py` to have your agent interact with the environment.
 
@@ -438,4 +566,4 @@ There is one pre-made environment wrapper:
 There are a couple basic agents.
 
 *   `random_agent`: Just plays randomly, shows how to make valid moves.
-*   `scripted_agent`: These are scripted for a single easy map.
+*   `scripted_agent`: These are scripted for a single mini game.
