@@ -1,0 +1,3 @@
+首先在pysc2文件夹中的mini_games.py中的mini_games参数中加入地图名称
+其次将新地图放在starcraftII文件夹中的maps里
+最后python运行即可
